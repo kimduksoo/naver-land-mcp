@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import random
 import httpx
 from regions import get_sigungu_coord
 
@@ -49,19 +50,45 @@ RLET_TYPE_MAP = {
 
 
 async def _request_with_retry(client: httpx.AsyncClient, method: str, url: str,
-                               max_retries: int = 3, **kwargs) -> httpx.Response:
-    """rate limit(429) 대응 retry with exponential backoff"""
+                               max_retries: int = 5, **kwargs) -> httpx.Response:
+    """rate limit(429) + abuse(302→/error/abuse) 대응 retry with backoff"""
     for attempt in range(max_retries):
-        resp = await client.request(method, url, **kwargs)
+        resp = await client.request(method, url, follow_redirects=False, **kwargs)
+
+        # 302 → /error/abuse (IP 기반 abuse 감지)
+        if resp.status_code in (301, 302):
+            location = resp.headers.get("location", "")
+            if "error" in location or "abuse" in location:
+                wait = 10 * (attempt + 1) + random.uniform(1, 5)
+                await asyncio.sleep(wait)
+                continue
+            # abuse가 아닌 일반 redirect는 follow
+            resp = await client.request(method, url, follow_redirects=True, **kwargs)
+
+        # 429 Too Many Requests
         if resp.status_code == 429:
-            wait = 2 ** (attempt + 1)
+            wait = 3 ** (attempt + 1) + random.uniform(0, 2)
             await asyncio.sleep(wait)
             continue
+
         resp.raise_for_status()
         return resp
-    # 마지막 시도도 429면 예외 발생
+    # abuse/rate limit으로 모든 retry 소진 시 None 반환 (호출자가 처리)
+    location = resp.headers.get("location", "") if resp.status_code in (301, 302) else ""
+    if resp.status_code == 429 or "abuse" in location or "error" in location:
+        return None
     resp.raise_for_status()
     return resp
+
+
+# 요청 간 랜덤 딜레이 (인간 수준 속도 시뮬레이션)
+REQUEST_DELAY_MIN = 1.0
+REQUEST_DELAY_MAX = 2.5
+
+
+async def _human_delay():
+    """요청 사이 랜덤 딜레이 (abuse 방지)"""
+    await asyncio.sleep(random.uniform(REQUEST_DELAY_MIN, REQUEST_DELAY_MAX))
 
 
 class NaverLandClient:
@@ -90,6 +117,8 @@ class NaverLandClient:
             f"{NEW_LAND_BASE}/regions/list",
             params={"cortarNo": cortar_no},
         )
+        if resp is None:
+            raise Exception("API rate limit")
         return resp.json()
 
     async def get_complexes(self, cortar_no: str, real_estate_type: str = "APT",
@@ -100,6 +129,8 @@ class NaverLandClient:
             f"{NEW_LAND_BASE}/regions/complexes",
             params={"cortarNo": cortar_no, "realEstateType": real_estate_type, "order": order},
         )
+        if resp is None:
+            raise Exception("API rate limit")
         return resp.json()
 
     async def get_complex_detail(self, complex_no: str) -> dict:
@@ -109,6 +140,8 @@ class NaverLandClient:
             f"{NEW_LAND_BASE}/complexes/{complex_no}",
             params={"sameAddressGroup": "false"},
         )
+        if resp is None:
+            raise Exception("API rate limit")
         return resp.json()
 
     async def get_price_info(self, complex_no: str, area_no: str,
@@ -120,6 +153,8 @@ class NaverLandClient:
             params={"complexNo": complex_no, "tradeType": trade_type,
                      "year": year, "areaNo": area_no, "type": "table"},
         )
+        if resp is None:
+            raise Exception("API rate limit")
         return resp.json()
 
     async def get_school_info(self, complex_no: str) -> dict:
@@ -128,6 +163,8 @@ class NaverLandClient:
             self._new_land, "GET",
             f"{NEW_LAND_BASE}/complexes/{complex_no}/schools",
         )
+        if resp is None:
+            raise Exception("API rate limit")
         return resp.json()
 
     # ──────────────────────────────────────────────
@@ -143,6 +180,8 @@ class NaverLandClient:
             params={"hscpNo": complex_no, "tradTpCd": trade_type,
                      "order": order, "showR0": "N", "page": page},
         )
+        if resp is None:
+            return {"result": {"list": [], "moreDataYn": "N"}}
         return resp.json()
 
     async def get_all_articles_by_complex(self, complex_no: str, trade_type: str = "A1",
@@ -158,7 +197,7 @@ class NaverLandClient:
             all_items.extend(items)
             if result.get("moreDataYn", "N") == "N":
                 break
-            await asyncio.sleep(0.5)
+            await _human_delay()
         return all_items
 
     async def get_region_info(self, cortar_no: str, real_estate_type: str = "APT",
@@ -208,10 +247,14 @@ class NaverLandClient:
                 "cortarNo": cortar_no, "isOnlyIsale": "false",
             },
         )
+        if resp is None:
+            return {"cortar": {}, "data": {"ARTICLE": []}}
         data = resp.json()
         detail = data.get("cortar", {}).get("detail", {})
         real_lat = float(detail.get("mapYCrdn", init_lat))
         real_lon = float(detail.get("mapXCrdn", init_lon))
+
+        await _human_delay()
 
         # 2단계: 정확한 좌표로 클러스터 재조회
         resp2 = await _request_with_retry(
@@ -225,6 +268,8 @@ class NaverLandClient:
                 "cortarNo": cortar_no, "isOnlyIsale": "false",
             },
         )
+        if resp2 is None:
+            return data  # 1단계 결과라도 반환
         return resp2.json()
 
     async def get_articles_by_coords(self, lat: float, lon: float,
@@ -256,6 +301,8 @@ class NaverLandClient:
             f"{M_LAND_BASE}/cluster/ajax/articleList",
             params=params,
         )
+        if resp is None:
+            return {"body": []}
         return resp.json()
 
     async def get_all_articles_by_coords(self, lat: float, lon: float,
@@ -275,5 +322,5 @@ class NaverLandClient:
             all_items.extend(items)
             if len(items) < 20:  # 한 페이지 최대 20건
                 break
-            await asyncio.sleep(0.5)
+            await _human_delay()
         return all_items

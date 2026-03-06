@@ -14,10 +14,14 @@ mcp = FastMCP("naver-land")
 client = NaverLandClient()
 
 
+ARTICLE_URL = "https://new.land.naver.com/articles/{}"
+
+
 def _format_article_complex(item: dict) -> dict:
     """단지 기반 매물 응답 포맷 (m.land/complex/getComplexArticleList)"""
+    article_no = item.get("atclNo")
     return {
-        "articleNo": item.get("atclNo"),
+        "articleNo": article_no,
         "articleName": item.get("atclNm"),
         "realEstateType": item.get("rletTpNm"),
         "tradeTypeName": item.get("tradTpNm"),
@@ -33,13 +37,15 @@ def _format_article_complex(item: dict) -> dict:
         "realtorName": item.get("rltrNm"),
         "featureDesc": item.get("atclFetrDesc"),
         "tagList": item.get("tagList"),
+        "url": ARTICLE_URL.format(article_no) if article_no else None,
     }
 
 
 def _format_article_coords(item: dict) -> dict:
     """좌표 기반 매물 응답 포맷 (m.land/cluster/ajax/articleList)"""
+    article_no = item.get("atclNo")
     return {
-        "articleNo": item.get("atclNo"),
+        "articleNo": article_no,
         "articleName": item.get("atclNm"),
         "realEstateType": item.get("rletTpNm"),
         "tradeTypeName": item.get("tradTpNm"),
@@ -57,6 +63,7 @@ def _format_article_coords(item: dict) -> dict:
         "tagList": item.get("tagList"),
         "lat": item.get("lat"),
         "lng": item.get("lng"),
+        "url": ARTICLE_URL.format(article_no) if article_no else None,
     }
 
 
