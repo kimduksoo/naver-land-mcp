@@ -13,6 +13,9 @@
 - 주변 학군 정보
 - 매매 / 전세 / 월세 거래 유형 지원
 - API rate limit 시 자동 엔드포인트 전환 (`new.land.naver.com` → `m.land.naver.com`)
+- 302 abuse redirect 감지 + 자동 backoff retry
+- 요청 간 랜덤 딜레이 (1~2.5초)로 rate limit 방지
+- 매물 URL 자동 생성 (`https://new.land.naver.com/articles/{articleNo}`)
 
 ## MCP 도구
 
@@ -108,14 +111,23 @@ regions.py       ← 시도/시군구 코드 및 좌표 데이터
 - 지역 검색 rate limit 시 내장 코드(시도/시군구)로 fallback
 - 좌표 기반 검색(`search_listings`)이 가장 안정적
 
+### Rate Limit 방어
+
+| 방어 수단 | 설명 |
+|-----------|------|
+| Human delay | 요청 간 1~2.5초 랜덤 대기 |
+| 429 retry | 지수 backoff (3^n초) + 랜덤 jitter, 최대 5회 |
+| Abuse retry | 302 `/error/abuse` 감지 시 10초×attempt backoff, 최대 5회 |
+| Graceful degradation | 모든 retry 소진 시 빈 결과 반환 (크래시 방지) |
+
 ## 응답 필드 설명
 
 ### 매물 (article)
 
 | 필드 | 설명 |
 |------|------|
-| `deposit` | 보증금 (만원 단위, 숫자) |
-| `rent` | 월세 (만원 단위, 숫자) |
+| `deposit` | 보증금 (만원 단위, 숫자. 예: 5000 = 5000만원) |
+| `rent` | 월세 (만원 단위, 숫자. 예: 150 = 150만원) |
 | `price` | 가격 (한글 표기, 예: "3억 5,000") |
 | `realEstateType` | 부동산 타입 (아파트, 오피스텔, 빌라) |
 | `exclusiveArea` | 전용면적 (㎡) |
@@ -123,12 +135,15 @@ regions.py       ← 시도/시군구 코드 및 좌표 데이터
 | `floorInfo` | 층 정보 (예: "15/25") |
 | `direction` | 향 (남향, 동향 등) |
 | `featureDesc` | 매물 설명 |
+| `url` | 네이버 부동산 매물 상세 URL |
 
 ## 주의사항
 
 - 네이버 부동산의 비공식 API를 사용합니다. API 변경 시 동작하지 않을 수 있습니다.
-- 과도한 요청 시 IP 기반 rate limit이 발생할 수 있습니다.
+- 과도한 요청 시 IP 기반 rate limit이 발생할 수 있습니다. (302 → `/error/abuse` redirect)
+- 단시간에 여러 지역을 대량 검색하면 일시적 IP 차단(수 분)이 될 수 있습니다.
 - 매물 데이터의 정확성은 네이버 부동산에 등록된 정보에 의존합니다.
+- 방 수(`roomCnt`)는 좌표 기반 검색 API에서 제공되지 않습니다. 면적과 설명으로 추정이 필요합니다.
 
 ## License
 
