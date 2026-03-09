@@ -14,16 +14,9 @@ mcp = FastMCP("naver-land")
 client = NaverLandClient()
 
 
-def _make_search_url(name: str, lat=None, lng=None) -> str:
-    """네이버 검색/지도 URL 생성 (네이버 부동산 SPA 딥링크 미지원 대응)
-    - 단지명이 고유한 경우: 네이버 검색 URL
-    - 단지명이 '빌라' 등 일반명인 경우: 네이버 지도 URL (좌표 기반)
-    """
-    from urllib.parse import quote
-    generic_names = {"빌라", "주택", "다세대", "연립", "다가구", "원룸", "투룸"}
-    if name in generic_names and lat and lng:
-        return f"https://map.naver.com/p?c={lng},{lat},17,0,0,0,dh"
-    return f"https://search.naver.com/search.naver?query={quote(name + ' 네이버부동산')}"
+def _make_article_url(article_no) -> str:
+    """네이버 부동산 매물 상세 URL (fin.land.naver.com)"""
+    return f"https://fin.land.naver.com/articles/{article_no}"
 
 
 def _format_article_complex(item: dict) -> dict:
@@ -46,17 +39,16 @@ def _format_article_complex(item: dict) -> dict:
         "realtorName": item.get("rltrNm"),
         "featureDesc": item.get("atclFetrDesc"),
         "tagList": item.get("tagList"),
-        "url": _make_search_url(item.get("atclNm", "")) if item.get("atclNm") else None,
+        "url": _make_article_url(article_no) if article_no else None,
     }
 
 
 def _format_article_coords(item: dict) -> dict:
     """좌표 기반 매물 응답 포맷 (m.land/cluster/ajax/articleList)"""
     article_no = item.get("atclNo")
-    name = item.get("atclNm", "")
     return {
         "articleNo": article_no,
-        "articleName": name,
+        "articleName": item.get("atclNm", ""),
         "realEstateType": item.get("rletTpNm"),
         "tradeTypeName": item.get("tradTpNm"),
         "buildingName": item.get("bildNm"),
@@ -73,7 +65,7 @@ def _format_article_coords(item: dict) -> dict:
         "tagList": item.get("tagList"),
         "lat": item.get("lat"),
         "lng": item.get("lng"),
-        "url": _make_search_url(name, item.get("lat"), item.get("lng")) if name else None,
+        "url": _make_article_url(article_no) if article_no else None,
     }
 
 
